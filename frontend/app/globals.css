@@ -1,0 +1,645 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Defaults — overridden per-request in app/layout.tsx from GET /theme */
+  --color-navy: 10 27 51;
+  --color-navy-light: 18 35 63;
+  --color-navy-2: 22 41 74;
+  --color-gold: 176 141 63;
+  --color-gold-light: 201 163 84;
+  --color-paper: 251 250 247;
+  --color-header: 10 27 51;
+  --color-header-light: 18 35 63;
+  --color-header-fg: 250 247 239;
+  --color-header-fg-muted: 170 181 198;
+  --color-footer: 10 27 51;
+  --color-footer-light: 18 35 63;
+  --color-footer-fg: 250 247 239;
+  --color-footer-fg-muted: 170 181 198;
+  --color-ink: 16 32 58;
+  --color-muted: 92 106 124;
+  --font-heading: "Spectral", Georgia, serif;
+  --font-body: "Public Sans", system-ui, sans-serif;
+  --radius: 2px;
+  --btn-radius: 2px;
+}
+
+/* ---------------------------------------------------------------------
+   Consolidated admin Save button (components/admin/UnsavedChangesGuard.tsx):
+   an opted-in page ("data-autosave-scope" on the block of forms making up
+   one editable record) gets one "Save All Changes" bar instead of one Save
+   button per section. Once that component has mounted, it adds
+   `autosave-active` to <html> and this rule hides every individual
+   section's own submit button, since the consolidated bar now submits all
+   of them together. Scoped to that class (not applied unconditionally) so
+   that if JavaScript fails to load for any reason, every original
+   per-section Save button is still visible and still works on its own —
+   this is a progressive enhancement, never the only way to save. */
+html.autosave-active [data-autosave-scope] form button[type="submit"] {
+  display: none;
+}
+
+/* ---------------------------------------------------------------------
+   Admin dashboard design system — deliberately decoupled from the public
+   site's Theme Builder. `app/admin/layout.tsx` wraps every admin screen
+   (login through the whole dashboard) in `.admin-shell`; CSS custom
+   properties cascade to descendants, so redeclaring the same variable
+   names here repoints every existing `bg-navy` / `text-gold` /
+   `rounded-[var(--radius)]` class already used across the admin codebase
+   to these fixed, professional values — without editing every page.
+   A refined slate-navy + warm brass palette and an 8px radius (vs. the
+   public site's sharp 2px default) read as a modern admin tool rather
+   than the marketing site's editorial-serif branding.
+--------------------------------------------------------------------- */
+.admin-shell {
+  --color-navy: 15 23 38; /* deep slate, less "brochure navy" */
+  --color-navy-light: 23 33 52;
+  --color-navy-2: 30 42 64;
+  --color-gold: 191 155 74; /* warm brass accent */
+  --color-gold-light: 212 180 108;
+  --color-paper: 248 250 252;
+  --font-heading: ui-serif, Georgia, "Times New Roman", serif;
+  --font-body: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --radius: 8px;
+  --btn-radius: 6px;
+
+  --admin-shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
+  --admin-shadow-md: 0 4px 16px -4px rgba(15, 23, 42, 0.12), 0 1px 3px rgba(15, 23, 42, 0.06);
+  --admin-shadow-lg: 0 12px 32px -8px rgba(15, 23, 42, 0.18), 0 2px 6px rgba(15, 23, 42, 0.08);
+
+  min-height: 100vh;
+  color: #0F1626;
+}
+
+/* A slimmer, quieter scrollbar in the dashboard's own scroll regions
+   (sidebar nav, content pane) instead of the browser's chunky default —
+   small detail, but it's the kind of thing that reads as "polished tool"
+   vs. "unstyled webpage". Firefox uses `scrollbar-width`; the pseudo-
+   elements below cover WebKit/Blink/Chromium browsers. */
+.admin-shell * {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(15, 23, 42, 0.18) transparent;
+}
+.admin-shell *::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.admin-shell *::-webkit-scrollbar-thumb {
+  background-color: rgba(15, 23, 42, 0.18);
+  border-radius: 8px;
+}
+.admin-shell *::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(15, 23, 42, 0.3);
+}
+.admin-shell *::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Every admin card/table/panel already uses `bg-white border border-line`
+   — adding a soft shadow here upgrades that whole visual language in one
+   place instead of hand-editing dozens of pages. Buttons and inputs get a
+   touch more breathing room and a proper focus ring for accessibility. */
+.admin-shell .bg-white.border-line,
+.admin-shell .bg-white.border.border-line {
+  box-shadow: var(--admin-shadow-sm);
+}
+.admin-shell button,
+.admin-shell a.button,
+.admin-shell input,
+.admin-shell select,
+.admin-shell textarea {
+  transition:
+    box-shadow 0.15s ease,
+    border-color 0.15s ease,
+    background-color 0.15s ease,
+    transform 0.1s ease;
+}
+.admin-shell button:not(:disabled):active {
+  transform: translateY(0.5px);
+}
+.admin-shell input:focus-visible,
+.admin-shell select:focus-visible,
+.admin-shell textarea:focus-visible,
+.admin-shell button:focus-visible,
+.admin-shell a:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(191, 155, 74, 0.35);
+}
+
+/* Defense-in-depth against page-level horizontal scroll: the admin shell
+   (app/admin/(dashboard)/layout.tsx) already contains its own scrolling
+   inside a fixed-height flex row so the sidebar/topbar never move, and
+   individual wide tables scroll inside their own `overflow-x-auto` box on
+   purpose — but a fixed-position element (a dropdown, toast, modal) with
+   content wider than the viewport sits outside that containment entirely
+   and can otherwise widen the actual <body>, dragging the whole page
+   (sidebar included) sideways when scrolled. This makes that class of bug
+   impossible site-wide, for both the admin dashboard and the public site,
+   without touching any single component.
+   `clip`, not `hidden`: per the CSS Overflow spec, setting overflow-x to
+   any value other than `visible`/`clip` while overflow-y is left at its
+   default `visible` forces overflow-y to compute as `auto` too — which
+   turns <body> into its own internal scroll container instead of the
+   actual page/viewport scrolling. That silently breaks every
+   `position: sticky` element on the site (the public Header among them —
+   confirmed by testing: with `hidden` here, the sticky header scrolled
+   straight off-screen instead of staying pinned). `clip` is explicitly
+   exempted from that forcing rule, so it blocks horizontal overflow
+   without taking vertical scrolling away from the real viewport. */
+html,
+body {
+  overflow-x: clip;
+}
+
+body {
+  background-color: rgb(var(--color-paper));
+  color: #10203a;
+}
+
+/* ---------------------------------------------------------------------
+   Location gate: hidden by default; a pre-hydration inline script (see
+   components/site/LocationGate.tsx) adds/removes `lg-open` on <html>
+   before first paint, so there's no flash of the homepage underneath it.
+   --------------------------------------------------------------------- */
+.location-gate {
+  display: none;
+}
+html.lg-open .location-gate {
+  display: flex;
+}
+html.lg-open body {
+  overflow: hidden;
+}
+
+/* ---------------------------------------------------------------------
+   Homepage hero animation: a slow Ken Burns drift on the fallback still
+   image (skipped automatically once a background video is uploaded),
+   and a bouncing scroll cue at the foot of the hero.
+   --------------------------------------------------------------------- */
+@keyframes hero-kenburns {
+  0% { transform: scale(1) translate3d(0, 0, 0); }
+  100% { transform: scale(1.08) translate3d(-1%, -1%, 0); }
+}
+.hero-kenburns {
+  animation: hero-kenburns 18s ease-out forwards;
+}
+
+/* Site-wide Scroll & Motion polish (Admin → Scroll & Motion). See
+   components/site/SmoothScroll.tsx, which drives the two custom properties
+   / attributes these rules key off of. Both are no-ops (transform: none,
+   opacity kept at whatever the element already had) until that component
+   turns the relevant admin toggle on, so this is safe to ship globally. */
+:root {
+  --scroll-y: 0;
+}
+[data-parallax-enabled="1"] .parallax-bg {
+  /* Small, capped drift — 6% of scroll distance, never past ±48px — so the
+     slightly-oversized (scale-110) media this class is paired with never
+     reveals an edge regardless of how far the visitor has scrolled. */
+  transform: translate3d(0, clamp(-48px, calc(var(--scroll-y) * -0.06px), 48px), 0) scale(1.1);
+}
+[data-cursor-glow-surface] {
+  position: relative;
+  isolation: isolate;
+}
+
+@keyframes hero-scroll-dot {
+  0%, 100% { transform: translateY(0); opacity: 1; }
+  50% { transform: translateY(7px); opacity: 0.3; }
+}
+.hero-scroll-dot {
+  animation: hero-scroll-dot 1.8s ease-in-out infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.hero-scroll-cue {
+  animation: hero-scroll-cue-fade 0.8s ease 0.6s both;
+}
+@keyframes hero-scroll-cue-fade {
+  from { opacity: 0; transform: translate(-50%, 8px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+/* ---------------------------------------------------------------------
+   Hero entrance animation — chosen per-site from the admin dashboard's
+   Hero Banner form (components/admin/AnimationPicker.tsx), stored as
+   heroContent.animation, and applied here by className. Runs once on
+   page load (the hero is always above the fold, so this isn't scroll-
+   triggered the way components/site/Reveal.tsx's animations are).
+   --------------------------------------------------------------------- */
+@keyframes hero-anim-fade-up-kf {
+  from { opacity: 0; transform: translateY(28px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes hero-anim-fade-in-kf {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes hero-anim-slide-left-kf {
+  from { opacity: 0; transform: translateX(-40px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes hero-anim-slide-right-kf {
+  from { opacity: 0; transform: translateX(40px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes hero-anim-zoom-in-kf {
+  from { opacity: 0; transform: scale(0.94); }
+  to { opacity: 1; transform: none; }
+}
+.hero-anim-fade-up { animation: hero-anim-fade-up-kf 0.9s cubic-bezier(0.16, 1, 0.3, 1) both; }
+.hero-anim-fade-in { animation: hero-anim-fade-in-kf 0.9s ease both; }
+.hero-anim-slide-left { animation: hero-anim-slide-left-kf 0.9s cubic-bezier(0.16, 1, 0.3, 1) both; }
+.hero-anim-slide-right { animation: hero-anim-slide-right-kf 0.9s cubic-bezier(0.16, 1, 0.3, 1) both; }
+.hero-anim-zoom-in { animation: hero-anim-zoom-in-kf 0.9s cubic-bezier(0.16, 1, 0.3, 1) both; }
+.hero-anim-none { animation: none; }
+
+/* ---------------------------------------------------------------------
+   Client Logos ("Trusted By") auto-scrolling carousel — Admin → Client
+   Logos → Display Settings → Motion. The logo list is rendered twice back
+   to back (see the homepage) and this animates the doubled track exactly
+   one half-width to the left, looping seamlessly. Paused on hover so a
+   visitor can read a specific logo; disabled entirely under reduced
+   motion, where the track becomes a plain scrollable row instead.
+   --------------------------------------------------------------------- */
+@keyframes logos-marquee-scroll {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+.logos-marquee-track {
+  animation: logos-marquee-scroll linear infinite;
+}
+.logos-marquee:hover .logos-marquee-track {
+  animation-play-state: paused;
+}
+
+/* ---------------------------------------------------------------------
+   Site-wide hover micro-animations — buttons, cards and nav links get a
+   subtle lift/scale on hover so interactive elements feel alive, without
+   any per-page configuration needed.
+   --------------------------------------------------------------------- */
+/* Scoped to the public site's <main> (see app/[lang]/(marketing)/layout.tsx)
+   so the admin dashboard's cards and buttons — visually similar markup —
+   stay still. */
+main a,
+main button {
+  transition: transform 0.18s ease, opacity 0.18s ease, box-shadow 0.18s ease, background-color 0.18s ease,
+    border-color 0.18s ease, color 0.18s ease;
+}
+main .card-grid > div:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 28px -12px rgba(10, 27, 51, 0.18);
+}
+/* Same idea as `.card-grid > div`, for a single standalone photo that isn't
+   part of a card grid (e.g. the About page's intro/leadership portraits) —
+   Reveal.tsx's own comment always said its `hover` prop applied to
+   ".hover-target elements generally", but no such rule actually existed
+   until now, so those photos silently never got the section's admin-picked
+   hover effect the way every card-grid photo already did. Applied to an
+   element directly (not a wrapping <div>), since a lone photo has no
+   separate card wrapper to hover. */
+main .hover-target {
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+main .hover-target:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 28px -12px rgba(10, 27, 51, 0.18);
+}
+main a.bg-gold:hover,
+main button.bg-gold:hover {
+  transform: translateY(-1px);
+}
+
+/* ---------------------------------------------------------------------
+   Admin-configurable hover effects (Admin → Pages & Content → a page's
+   "Section Visibility & Animations" card → Hover Effect). `data-hover` is
+   set on the <Reveal> wrapper around a section (components/site/Reveal.tsx)
+   — these target any `.card-grid` cards inside it, so no page's card
+   markup needs to change for a new effect to apply. Higher specificity
+   than the plain `.card-grid > div:hover` rule above (an admin choice
+   always wins over the site default), regardless of source order.
+   --------------------------------------------------------------------- */
+[data-hover="lift"] .card-grid > div:hover {
+  transform: translateY(-6px);
+  box-shadow: 0 14px 32px -12px rgba(10, 27, 51, 0.22);
+}
+[data-hover="zoom"] .card-grid > div:hover {
+  transform: scale(1.025);
+}
+[data-hover="glow"] .card-grid > div:hover {
+  transform: none;
+  box-shadow: 0 0 0 3px rgba(176, 141, 63, 0.32);
+}
+[data-hover="underline"] .card-grid > div:hover h2,
+[data-hover="underline"] .card-grid > div:hover h3,
+[data-hover="underline"] .card-grid > div:hover h3.font-semibold {
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+[data-hover="none"] .card-grid > div:hover {
+  transform: none;
+  box-shadow: none;
+}
+[data-hover="lift"] .hover-target:hover {
+  transform: translateY(-6px);
+  box-shadow: 0 14px 32px -12px rgba(10, 27, 51, 0.22);
+}
+[data-hover="zoom"] .hover-target:hover {
+  transform: scale(1.025);
+}
+[data-hover="glow"] .hover-target:hover {
+  transform: none;
+  box-shadow: 0 0 0 3px rgba(176, 141, 63, 0.32);
+}
+[data-hover="none"] .hover-target:hover {
+  transform: none;
+  box-shadow: none;
+}
+
+/* ---------------------------------------------------------------------
+   Per-item ("stagger") entrance animation — components/site/Reveal.tsx's
+   `stagger` prop toggles `.is-visible` on the wrapper instead of animating
+   the block as one piece; these keyframes + nth-child delays then animate
+   each *direct child* in sequence (e.g. each card in a grid appearing one
+   after another) without any page needing to wrap individual cards in
+   their own <Reveal>.
+   --------------------------------------------------------------------- */
+@keyframes reveal-fade-up {
+  from { opacity: 0; transform: translateY(28px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes reveal-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes reveal-slide-left {
+  from { opacity: 0; transform: translateX(-40px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes reveal-slide-right {
+  from { opacity: 0; transform: translateX(40px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes reveal-zoom-in {
+  from { opacity: 0; transform: scale(0.94); }
+  to { opacity: 1; transform: none; }
+}
+/* Advanced variants (added alongside the original five) — a richer set
+   for admins who want more than fade/zoom on a section, picked the same
+   way from Admin → Pages & Content → a page → Section Visibility &
+   Animations. */
+@keyframes reveal-blur-in {
+  from { opacity: 0; transform: scale(1.03); filter: blur(14px); }
+  to { opacity: 1; transform: none; filter: blur(0px); }
+}
+@keyframes reveal-clip-reveal {
+  from { opacity: 1; clip-path: inset(0 100% 0 0); }
+  to { opacity: 1; clip-path: inset(0 0 0 0); }
+}
+@keyframes reveal-flip-3d {
+  from { opacity: 0; transform: perspective(800px) rotateX(-18deg); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes reveal-elastic-pop {
+  from { opacity: 0; transform: scale(0.7); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes reveal-rotate-in {
+  from { opacity: 0; transform: rotate(-6deg) scale(0.96); }
+  to { opacity: 1; transform: none; }
+}
+/* "Ultimate advanced" tier — a further six variants added on top of the
+   eleven above, for admins who want the landing page (or any section) to
+   feel a step above the rest of the site. Same picker, same Reveal
+   component, nothing page-specific about them. */
+@keyframes reveal-swing-in {
+  0% { opacity: 0; transform: rotate(-14deg); }
+  60% { opacity: 1; transform: rotate(4deg); }
+  100% { opacity: 1; transform: rotate(0deg); }
+}
+@keyframes reveal-roll-in {
+  from { opacity: 0; transform: translateX(-70px) rotate(-100deg); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes reveal-skew-in {
+  from { opacity: 0; transform: skewX(-14deg) translateX(-24px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes reveal-bounce-in {
+  0% { opacity: 0; transform: translateY(-46px); }
+  55% { opacity: 1; transform: translateY(8px); }
+  75% { transform: translateY(-4px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+@keyframes reveal-tilt-3d {
+  from { opacity: 0; transform: perspective(900px) rotateY(28deg) translateX(24px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes reveal-glow-in {
+  from { opacity: 0; transform: scale(0.97); filter: brightness(1.9) saturate(0.2); }
+  to { opacity: 1; transform: none; filter: brightness(1) saturate(1); }
+}
+.reveal-stagger > * {
+  opacity: 0;
+}
+.reveal-stagger.is-visible > * {
+  animation-duration: var(--reveal-duration, 700ms);
+  animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  animation-fill-mode: forwards;
+}
+.reveal-stagger.is-visible[data-variant="fade-up"] > * { animation-name: reveal-fade-up; }
+.reveal-stagger.is-visible[data-variant="fade-in"] > * { animation-name: reveal-fade-in; }
+.reveal-stagger.is-visible[data-variant="slide-left"] > * { animation-name: reveal-slide-left; }
+.reveal-stagger.is-visible[data-variant="slide-right"] > * { animation-name: reveal-slide-right; }
+.reveal-stagger.is-visible[data-variant="zoom-in"] > * { animation-name: reveal-zoom-in; }
+.reveal-stagger.is-visible[data-variant="blur-in"] > * { animation-name: reveal-blur-in; }
+.reveal-stagger.is-visible[data-variant="clip-reveal"] > * { animation-name: reveal-clip-reveal; }
+.reveal-stagger.is-visible[data-variant="flip-3d"] > * { animation-name: reveal-flip-3d; }
+.reveal-stagger.is-visible[data-variant="elastic-pop"] > * { animation-name: reveal-elastic-pop; animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1); }
+.reveal-stagger.is-visible[data-variant="rotate-in"] > * { animation-name: reveal-rotate-in; }
+.reveal-stagger.is-visible[data-variant="swing-in"] > * { animation-name: reveal-swing-in; }
+.reveal-stagger.is-visible[data-variant="roll-in"] > * { animation-name: reveal-roll-in; }
+.reveal-stagger.is-visible[data-variant="skew-in"] > * { animation-name: reveal-skew-in; }
+.reveal-stagger.is-visible[data-variant="bounce-in"] > * { animation-name: reveal-bounce-in; animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1); }
+.reveal-stagger.is-visible[data-variant="tilt-3d"] > * { animation-name: reveal-tilt-3d; }
+.reveal-stagger.is-visible[data-variant="glow-in"] > * { animation-name: reveal-glow-in; }
+/* 60ms-per-item ladder, capped at the 17th+ item so a very long list
+   doesn't leave the last cards waiting seconds to appear. */
+.reveal-stagger > *:nth-child(1) { animation-delay: 0ms; }
+.reveal-stagger > *:nth-child(2) { animation-delay: 60ms; }
+.reveal-stagger > *:nth-child(3) { animation-delay: 120ms; }
+.reveal-stagger > *:nth-child(4) { animation-delay: 180ms; }
+.reveal-stagger > *:nth-child(5) { animation-delay: 240ms; }
+.reveal-stagger > *:nth-child(6) { animation-delay: 300ms; }
+.reveal-stagger > *:nth-child(7) { animation-delay: 360ms; }
+.reveal-stagger > *:nth-child(8) { animation-delay: 420ms; }
+.reveal-stagger > *:nth-child(9) { animation-delay: 480ms; }
+.reveal-stagger > *:nth-child(10) { animation-delay: 540ms; }
+.reveal-stagger > *:nth-child(11) { animation-delay: 600ms; }
+.reveal-stagger > *:nth-child(12) { animation-delay: 660ms; }
+.reveal-stagger > *:nth-child(13) { animation-delay: 720ms; }
+.reveal-stagger > *:nth-child(14) { animation-delay: 780ms; }
+.reveal-stagger > *:nth-child(15) { animation-delay: 840ms; }
+.reveal-stagger > *:nth-child(16) { animation-delay: 900ms; }
+.reveal-stagger > *:nth-child(n+17) { animation-delay: 960ms; }
+
+/* ---------------------------------------------------------------------
+   The About page's Milestones timeline (components/site/MilestoneTimeline.tsx)
+   walks a real photo/illustration (three swapped frames: idle + two walk
+   poses — configurable from Admin → Pages & Content → About → Milestones
+   Animation) rather than a hand-drawn SVG, so it needs no limb-swing
+   keyframes of its own here — only the left/right *travel* animation
+   between milestones, which the component generates inline per render
+   (it depends on how many milestones there are and the admin-chosen
+   speed).
+   --------------------------------------------------------------------- */
+
+/* Admin toast (components/admin/Toast.tsx) */
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.admin-toast {
+  animation: toast-in 0.2s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .admin-toast {
+    animation: none !important;
+  }
+  .hero-kenburns,
+  .hero-scroll-dot,
+  .hero-scroll-cue,
+  .hero-anim-fade-up,
+  .hero-anim-fade-in,
+  .hero-anim-slide-left,
+  .hero-anim-slide-right,
+  .hero-anim-zoom-in,
+  .logos-marquee-track,
+  main a,
+  main button,
+  main .card-grid > div,
+  .reveal-stagger.is-visible > *,
+  .parallax-bg {
+    animation: none !important;
+    transition: none !important;
+    transform: none !important;
+  }
+  .reveal-stagger > * {
+    opacity: 1 !important;
+  }
+  .logos-marquee,
+  .logos-marquee-nohover {
+    overflow-x: auto !important;
+  }
+}
+
+/* ---------------------------------------------------------------------
+   Theme Builder: Card Style ("bordered" / "shadowed" / "flat")
+   ---------------------------------------------------------------------
+   Card grids across the marketing pages share the same "hairline grid"
+   pattern — a grid with a 1px background gap standing in for individual
+   borders (`.card-grid { gap-px bg-line border border-line }`), with each
+   cell a plain `bg-white` div. These rules retarget that same markup to
+   the admin's chosen card style without changing every page's markup.
+   "bordered" is the default look above and needs no override here.
+--------------------------------------------------------------------- */
+body[data-card-style="shadowed"] .card-grid {
+  background-color: transparent;
+  border-color: transparent;
+  gap: 20px;
+}
+body[data-card-style="shadowed"] .card-grid > * {
+  box-shadow: 0 4px 20px rgba(15, 23, 42, 0.09);
+  border-radius: var(--radius);
+}
+
+body[data-card-style="flat"] .card-grid {
+  background-color: transparent;
+  border-color: transparent;
+  gap: 0;
+}
+body[data-card-style="flat"] .card-grid > * {
+  box-shadow: none;
+}
+
+::selection {
+  background: #d9c58f;
+}
+
+/* Dashboard greeting banner (components/admin/GreetingBanner.tsx) —
+   twinkling stars at night, drifting clouds by day, a gently bobbing
+   sun/moon, and a slow sun-ray rotation. All plain CSS transforms/opacity,
+   no animation library needed for a handful of decorative elements. */
+@keyframes admin-twinkle {
+  0%,
+  100% {
+    opacity: 0.25;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 0.9;
+    transform: scale(1.15);
+  }
+}
+@keyframes admin-drift {
+  0% {
+    transform: translateX(-10%);
+  }
+  100% {
+    transform: translateX(130%);
+  }
+}
+@keyframes admin-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+@keyframes admin-spin-slow {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  [style*="admin-twinkle"],
+  [style*="admin-drift"],
+  [style*="admin-float"],
+  [style*="admin-spin-slow"] {
+    animation: none !important;
+  }
+}
+
+.container-page {
+  max-width: 1280px;
+  margin-left: auto;
+  margin-right: auto;
+  padding-left: 40px;
+  padding-right: 40px;
+}
+
+@media (max-width: 768px) {
+  .container-page {
+    padding-left: 20px;
+    padding-right: 20px;
+  }
+}
+
+/* Image Protection (Admin → Site Settings) — pairs with
+   ImageProtectionGuard's contextmenu/dragstart JS listeners. Blocks
+   text-selection-drag and iOS's long-press "Save to Photos" callout on
+   every image/video across the public site when enabled. */
+.protect-media img,
+.protect-media video {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}

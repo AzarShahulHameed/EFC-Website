@@ -1,0 +1,850 @@
+// ---------------------------------------------------------------------------
+// EFC Auditing — CMS data model
+// Every entity the Admin Dashboard is meant to control lives here, so that
+// nothing on the public site is hardcoded — content, services, team,
+// branches, testimonials, leads, SEO, theme and translations are all rows
+// an editor can change without a deploy.
+// ---------------------------------------------------------------------------
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Auth & RBAC
+// ---------------------------------------------------------------------------
+
+enum Role {
+  SUPER_ADMIN
+  ADMIN
+  EDITOR
+}
+
+model User {
+  id            String   @id @default(uuid())
+  email         String   @unique
+  passwordHash  String
+  name          String
+  role          Role     @default(EDITOR)
+  isActive      Boolean  @default(true)
+
+  // My Profile screen (Admin → My Profile) — none of this affects login or
+  // permissions, it's just how an admin presents themselves in the
+  // dashboard (sidebar avatar, dashboard greeting).
+  photoUrl      String?
+  phone         String?
+  bio           String?
+
+  mfaEnabled    Boolean  @default(false)
+  mfaSecret     String? // TOTP secret, encrypted at rest in production
+
+  // One-time-passcode state for the Security page's "Change Password" /
+  // "Change Email" flows (both require emailing a 6-digit code before the
+  // change takes effect). Only one pending OTP can exist at a time — a new
+  // request overwrites it. Never store the OTP itself, only its bcrypt hash.
+  pendingOtpHash       String?
+  pendingOtpPurpose    String? // "PASSWORD_CHANGE" | "EMAIL_CHANGE"
+  pendingOtpExpiresAt  DateTime?
+  pendingEmail         String? // the new address, staged until EMAIL_CHANGE is confirmed
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  auditLogs     AuditLog[]
+  jobApplicationsAssigned JobApplication[] @relation("ApplicationReviewer")
+  leadsAssigned Lead[]
+
+  @@index([email])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  user       User?    @relation(fields: [userId], references: [id])
+  userId     String?
+  action     String // e.g. "UPDATE", "CREATE", "DELETE"
+  entityType String // e.g. "Service", "SiteContentBlock"
+  entityId   String
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+}
+
+// ---------------------------------------------------------------------------
+// Languages & translation
+// ---------------------------------------------------------------------------
+
+model Language {
+  code      String  @id // "en" | "ar" | "fr" | "hi"
+  name      String // "English"
+  isRTL     Boolean @default(false)
+  isActive  Boolean @default(true)
+  isDefault Boolean @default(false)
+}
+
+// Generic UI-string translations: buttons, error/success/validation
+// messages, nav labels — anything that isn't a full content record below.
+model Translation {
+  id           String @id @default(uuid())
+  key          String // "cta.book_consultation", "error.validation_failed"
+  languageCode String
+  value        String
+
+  @@unique([key, languageCode])
+  @@index([languageCode])
+}
+
+// ---------------------------------------------------------------------------
+// Flexible page content — hero copy, stats, trust badges, CTA bands, etc.
+// One JSON blob per (page, section, language) so new sections never need a
+// migration.
+// ---------------------------------------------------------------------------
+
+model ContentBlock {
+  id           String   @id @default(uuid())
+  page         String // "home" | "about" | "contact" ...
+  section      String // "hero" | "stats" | "trust_strip" | "cta_band" ...
+  languageCode String
+  data         Json // arbitrary shape per section, validated in the service layer
+  isPublished  Boolean  @default(true)
+  updatedAt    DateTime @updatedAt
+  updatedById  String?
+
+  @@unique([page, section, languageCode])
+  @@index([page, languageCode])
+}
+
+// ---------------------------------------------------------------------------
+// Page Builder — an ordered list of freeform content blocks an admin can
+// add to any page (by its page key, same strings ContentBlock/PageHeader
+// use — "home", "about", "contact", a sub-service's composite key, etc.)
+// without a developer adding a new hardcoded section first. Each block's
+// `content` shape depends on its `type` (validated loosely in the service
+// layer, same approach as ContentBlock.data) — e.g. a "richText" block's
+// content is `{ html }`, an "image" block's is `{ url, position, caption,
+// link }`. This is what makes "add new content myself" possible: a new
+// row here, not a new column or a new frontend component.
+// ---------------------------------------------------------------------------
+
+model PageBlock {
+  id           String   @id @default(uuid())
+  page         String // "home" | "about" | "contact" | a sub-service's composite key ...
+  languageCode String   @default("en")
+  type         String // "richText" | "image" | "video" | "imageText" | "cta" | "quote" | "gallery" | "spacer"
+  content      Json // arbitrary shape per type, validated in the service layer
+  animation    String   @default("fade-up")
+  order        Int      @default(0)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([page, languageCode])
+}
+
+// ---------------------------------------------------------------------------
+// Services
+// ---------------------------------------------------------------------------
+
+model ServiceCategory {
+  id       String    @id @default(uuid())
+  slug     String    @unique
+  order    Int       @default(0)
+  services Service[]
+}
+
+model Service {
+  id         String   @id @default(uuid())
+  slug       String   @unique
+  categoryId String?
+  category   ServiceCategory? @relation(fields: [categoryId], references: [id])
+  iconKey    String? // maps to a frontend icon component
+  brochureUrl String?
+  imageUrl     String? // uploaded via the admin dashboard, shown on the service's card and detail page
+  imagePosition String? @default("center") // CSS object-position keyword: "top" | "center" | "bottom"
+  isActive   Boolean  @default(true)
+  order      Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  // Who a visitor should contact about this service — picked from the
+  // existing Team roster (Admin → Services → Edit → Responsible Person),
+  // rendered on the service detail page with photo, name, position and
+  // linked-in/email/phone icons. Optional: a service with none set simply
+  // doesn't render that card.
+  responsiblePersonId String?
+  responsiblePerson    TeamMember? @relation("ServiceResponsiblePerson", fields: [responsiblePersonId], references: [id], onDelete: SetNull)
+
+  translations   ServiceTranslation[]
+  relatedTo      RelatedService[] @relation("ServiceA")
+  relatedFrom    RelatedService[] @relation("ServiceB")
+  subServices    SubService[]
+}
+
+// A named sub-offering under a broader Service — e.g. "Audit" listing
+// "External Audit" / "Internal Audit" / "IFRS Advisory" as its
+// sub-services. Shown on the service's own detail page and, by name only
+// (no description), grouped under the parent in the header's Services
+// dropdown. English-only for now (unlike Service/TeamMember content,
+// there's no per-language translations table here) — keeps the admin form
+// simple; add a SubServiceTranslation table later if per-language names
+// turn out to matter.
+model SubService {
+  id          String   @id @default(uuid())
+  service     Service  @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  serviceId   String
+  name        String
+  slug        String?
+  description String? // short teaser — the compact "What this includes" card + this page's meta description
+  // Full page content — this is what makes a sub-service "everything a
+  // main Service page has" (per the round-8 brief): its own photo, its own
+  // optional video, and a rich HTML body (admin-authored via the same
+  // RichTextField/sanitizeRichText used elsewhere, so it can include a
+  // redirect link to any other page).
+  body          String?
+  imageUrl      String?
+  imagePosition String?  @default("center")
+  videoUrl      String?
+  order       Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  // Same AEO-oriented detail sections as ServiceTranslation below (see its
+  // comment) — flat here rather than in a separate translation table,
+  // matching `body`/`description` above, since a sub-service is
+  // English-only for now. Gives a sub-service's own page the same field
+  // set a full Service page has (What is it / Who needs it / Benefits /
+  // Process / Cost factors / Timeline / FAQs), instead of just one plain
+  // description box.
+  metaTitle       String?
+  metaDescription String?
+  whatIsIt        String?
+  whoNeedsIt      String?
+  benefits        String? // newline-separated, one item per line, in order
+  process         String? // newline-separated, one item per line, in order
+  costFactors     String?
+  timeline        String?
+  faqs            Json? // [{ question, answer }]
+
+  // Who a visitor should contact about this specific sub-service — same
+  // pattern as Service.responsiblePersonId, picked from the Team roster.
+  // Optional and independent of the parent service's own responsible
+  // person: a sub-service with none set simply doesn't render that card.
+  responsiblePersonId String?
+  responsiblePerson    TeamMember? @relation("SubServiceResponsiblePerson", fields: [responsiblePersonId], references: [id], onDelete: SetNull)
+
+  // Every text field above (name, description, body, the AEO sections...)
+  // stays the English/default text an admin edits directly — unchanged.
+  // This adds OTHER-language overrides on top of that base row, the same
+  // shape as FreezoneApprovalTranslation above, so a sub-service — which
+  // the code comment used to say was "English-only for now" — can actually
+  // be translated without moving its content into a whole separate
+  // ServiceTranslation-style table. slug/imageUrl/videoUrl/order/isActive/
+  // responsiblePerson aren't per-language.
+  translations SubServiceTranslation[]
+
+  @@index([serviceId])
+}
+
+model SubServiceTranslation {
+  id              String     @id @default(uuid())
+  subService      SubService @relation(fields: [subServiceId], references: [id], onDelete: Cascade)
+  subServiceId    String
+  languageCode    String
+  name            String?
+  description     String?
+  body            String?
+  metaTitle       String?
+  metaDescription String?
+  whatIsIt        String?
+  whoNeedsIt      String?
+  benefits        String?
+  process         String?
+  costFactors     String?
+  timeline        String?
+  faqs            Json?
+
+  @@unique([subServiceId, languageCode])
+}
+
+model ServiceTranslation {
+  id              String  @id @default(uuid())
+  service         Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  serviceId       String
+  languageCode    String
+  title           String
+  summary         String
+  description     String
+  metaTitle       String?
+  metaDescription String?
+
+  // AEO-oriented detail sections (Answer Engine Optimization — every
+  // service page should answer these directly for AI Overviews/ChatGPT/
+  // Copilot/Gemini/Perplexity/voice search, per the project brief).
+  // whatIsIt/whoNeedsIt/costFactors/timeline are single paragraphs;
+  // benefits/process are newline-separated lists (one item per line, in
+  // order); faqs is an array of { question, answer } pairs, rendered on
+  // the public page with FAQPage schema.org JSON-LD.
+  whatIsIt     String?
+  whoNeedsIt   String?
+  benefits     String?
+  process      String?
+  costFactors  String?
+  timeline     String?
+  faqs         Json?
+
+  @@unique([serviceId, languageCode])
+}
+
+model RelatedService {
+  id         String  @id @default(uuid())
+  serviceA   Service @relation("ServiceA", fields: [serviceAId], references: [id], onDelete: Cascade)
+  serviceAId String
+  serviceB   Service @relation("ServiceB", fields: [serviceBId], references: [id], onDelete: Cascade)
+  serviceBId String
+
+  @@unique([serviceAId, serviceBId])
+}
+
+// ---------------------------------------------------------------------------
+// Team
+// ---------------------------------------------------------------------------
+
+model TeamMember {
+  id             String   @id @default(uuid())
+  name           String
+  category       String   @default("Key Member") // "Partner" | "Key Member" — groups the public Team page into two sub-sections
+  photoUrl       String?
+  photoPosition  String?  @default("center") // CSS object-position keyword: "top" | "center" | "bottom"
+  branchId       String?
+  branch         Branch?  @relation(fields: [branchId], references: [id])
+  qualification  String?
+  linkedinUrl    String?
+  email          String? // shown as a contact icon wherever this person is featured (Team, and as a Service's Responsible Person)
+  phone          String? // shown as a contact icon alongside email — mobile number, any format the admin types
+  yearsExperience Int?
+  languagesSpoken String[] // ["English", "Arabic"]
+  isActive       Boolean  @default(true)
+  order          Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  translations      TeamMemberTranslation[]
+  responsibleFor     Service[] @relation("ServiceResponsiblePerson")
+  responsibleForSubServices SubService[] @relation("SubServiceResponsiblePerson")
+}
+
+model TeamMemberTranslation {
+  id           String     @id @default(uuid())
+  member       TeamMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  memberId     String
+  languageCode String
+  position     String
+  bio          String
+  specialization String?
+
+  @@unique([memberId, languageCode])
+}
+
+// ---------------------------------------------------------------------------
+// Branches / locations
+// ---------------------------------------------------------------------------
+
+model Branch {
+  id           String   @id @default(uuid())
+  city         String
+  country      String   @default("United Arab Emirates")
+  addressLine  String
+  phone        String
+  whatsapp     String?
+  email        String
+  workingHours String
+  googleMapsUrl String?
+  latitude     Float?
+  longitude    Float?
+  branchHeadId String?
+  isActive     Boolean  @default(true)
+  order        Int      @default(0)
+  // If this location already has its own separate website, set this and
+  // the site's location picker sends a visitor straight there instead of
+  // just tailoring this site's content to them. Optional — leave blank
+  // for a branch that should keep using this site normally.
+  externalUrl  String?
+
+  teamMembers  TeamMember[]
+  leads        Lead[]
+
+  @@index([city])
+}
+
+// ---------------------------------------------------------------------------
+// Testimonials & client logos
+// ---------------------------------------------------------------------------
+
+model Testimonial {
+  id           String   @id @default(uuid())
+  clientName   String
+  clientTitle  String?
+  clientPhotoUrl String?
+  rating       Int      @default(5)
+  isActive     Boolean  @default(true)
+  order        Int      @default(0)
+  createdAt    DateTime @default(now())
+
+  translations TestimonialTranslation[]
+}
+
+model TestimonialTranslation {
+  id            String      @id @default(uuid())
+  testimonial   Testimonial @relation(fields: [testimonialId], references: [id], onDelete: Cascade)
+  testimonialId String
+  languageCode  String
+  quote         String
+
+  @@unique([testimonialId, languageCode])
+}
+
+model ClientLogo {
+  id       String  @id @default(uuid())
+  name     String
+  imageUrl String
+  order    Int     @default(0)
+  isActive Boolean @default(true)
+}
+
+// Footer "Stay Informed" signup — previously a dead form with nowhere to
+// send its submit at all. `@unique` on email makes re-subscribing
+// idempotent (the service treats it as a success, not an error) rather
+// than needing its own duplicate-check query.
+model NewsletterSubscriber {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  createdAt DateTime @default(now())
+}
+
+// The homepage used to support exactly one "Freezone Approved"-style
+// callout (badge/headline/body/CTA/photo-or-video). A firm registered
+// with more than one freezone/regulator needs to show all of them, so
+// this replaces that single ContentBlock entry with a proper list —
+// same order/isActive shape as ClientLogo/Testimonial above, so the
+// admin CRUD pattern (add, reorder, toggle, delete) is the one already
+// used everywhere else in this schema, not a one-off.
+model FreezoneApproval {
+  id            String  @id @default(uuid())
+  badge         String  @default("Freezone Approved")
+  headline      String
+  body          String
+  ctaLabel      String  @default("Learn more")
+  ctaHref       String  @default("/about")
+  imageUrl      String?
+  imagePosition String  @default("center")
+  videoUrl      String?
+  mediaPosition String  @default("right")
+  order         Int     @default(0)
+  isActive      Boolean @default(true)
+
+  // The badge/headline/body/ctaLabel columns above stay the English/default
+  // text an admin edits directly (unchanged from before) — this only adds
+  // OTHER-language overrides on top, the same "translated on top of the
+  // English base row" shape SubServiceTranslation below uses, rather than
+  // moving every freezone card into a full ServiceTranslation-style table.
+  // ctaHref/imageUrl/videoUrl/mediaPosition/order/isActive aren't
+  // per-language (a link or image doesn't change by locale).
+  translations FreezoneApprovalTranslation[]
+}
+
+model FreezoneApprovalTranslation {
+  id                 String           @id @default(uuid())
+  freezoneApproval   FreezoneApproval @relation(fields: [freezoneApprovalId], references: [id], onDelete: Cascade)
+  freezoneApprovalId String
+  languageCode       String
+  badge              String?
+  headline           String?
+  body               String?
+  ctaLabel           String?
+
+  @@unique([freezoneApprovalId, languageCode])
+}
+
+// Admin dashboard notifications (the Topbar bell) — broadcast to every
+// signed-in admin rather than targeted at a specific user, matching the
+// scale of this app (a small internal team, not per-admin inboxes). Fired
+// from the natural "something happened" moments elsewhere in the API: a
+// new lead, a newsletter signup, a chatbot escalation, a job application.
+// `link` is an admin-relative path (e.g. "/admin/leads") the dashboard
+// navigates to when the notification is clicked.
+model Notification {
+  id        String   @id @default(uuid())
+  type      String // "NEW_LEAD" | "NEWSLETTER_SIGNUP" | "CHATBOT_ESCALATION" | "JOB_APPLICATION"
+  title     String
+  body      String?
+  link      String?
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([isRead, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Insights / news / blog
+// ---------------------------------------------------------------------------
+
+model InsightCategory {
+  id    String          @id @default(uuid())
+  slug  String          @unique // "audit-updates" | "tax-updates" | "vat-updates" ...
+  order Int             @default(0)
+  posts InsightArticle[]
+}
+
+// The three content types Admin → Insights lets an admin tag a post with,
+// separate from the free-text InsightCategory above (which is more like a
+// topic tag, e.g. "Tax Updates") — this is what the public Insights page's
+// three-way filter (Newsletter / Insight / Fun Activity) actually filters
+// on. Kept as a plain string with a matching `@default` + backend `@IsIn`
+// validation rather than a Prisma enum, consistent with how this schema
+// already prefers strings-with-validation over enums elsewhere.
+model InsightArticle {
+  id            String   @id @default(uuid())
+  slug          String   @unique
+  categoryId    String?
+  category      InsightCategory? @relation(fields: [categoryId], references: [id])
+  postType      String   @default("insight") // "newsletter" | "insight" | "fun_activity"
+  // When set, this post is a repost/companion of a real LinkedIn post
+  // rather than (or in addition to) an on-site article — the public
+  // Insights list shows a LinkedIn badge/icon on its card and the card
+  // links straight out to this URL (in a new tab) instead of the internal
+  // /insights/[slug] detail page. Independent of `postType`: an admin can
+  // tag a "newsletter" or "fun_activity" post with a LinkedIn URL too.
+  linkedinUrl   String?
+  coverImageUrl String?
+  coverImagePosition String? @default("center") // CSS object-position keyword: "top" | "center" | "bottom"
+  // An uploaded video for this post — shown on the article's detail page
+  // (above the body, same "photo, or video, or both" pattern as a Service's
+  // own imageUrl/videoUrl pair). Optional and independent of coverImageUrl.
+  coverVideoUrl String?
+  authorId      String?
+  isPublished   Boolean  @default(false)
+  publishAt     DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  translations InsightTranslation[]
+}
+
+model InsightTranslation {
+  id              String         @id @default(uuid())
+  article         InsightArticle @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  articleId       String
+  languageCode    String
+  title           String
+  excerpt         String
+  body            String
+  metaTitle       String?
+  metaDescription String?
+
+  @@unique([articleId, languageCode])
+}
+
+// ---------------------------------------------------------------------------
+// Careers
+// ---------------------------------------------------------------------------
+
+model JobOpening {
+  id           String   @id @default(uuid())
+  title        String
+  department   String
+  location     String
+  employmentType String // "Full-time" | "Graduate Program" ...
+  description  String
+  responsibilities String? // newline-separated bullet list, admin-entered
+  qualifications   String? // newline-separated bullet list, admin-entered
+  isOpen       Boolean  @default(true)
+  postedAt     DateTime @default(now())
+  closesAt     DateTime?
+
+  applications JobApplication[]
+}
+
+enum ApplicationStatus {
+  RECEIVED
+  UNDER_REVIEW
+  INTERVIEWING
+  OFFERED
+  REJECTED
+}
+
+model JobApplication {
+  id           String            @id @default(uuid())
+  job          JobOpening        @relation(fields: [jobId], references: [id])
+  jobId        String
+  fullName     String
+  email        String
+  phone        String?
+  resumeUrl    String
+  coverLetter  String?
+  answers      Json? // admin-configured custom application fields: { [fieldId]: value }
+  status       ApplicationStatus @default(RECEIVED)
+  reviewer     User?             @relation("ApplicationReviewer", fields: [reviewerId], references: [id])
+  reviewerId   String?
+  createdAt    DateTime          @default(now())
+
+  // Prevents the same person applying twice to the same opening (a
+  // double-click on "Submit Application" or a resubmitted form). Enforced
+  // at the DB level so it holds even under concurrent requests, in addition
+  // to the friendlier pre-check in careers.service.ts that returns a clear
+  // "you've already applied" message instead of a raw constraint error.
+  @@unique([jobId, email])
+}
+
+// ---------------------------------------------------------------------------
+// CRM / Leads
+// ---------------------------------------------------------------------------
+
+enum LeadSource {
+  CONTACT_FORM
+  CHATBOT
+  CAREER_FORM
+  WHATSAPP
+  CONSULTATION_FORM
+}
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  QUALIFIED
+  PROPOSAL_SENT
+  WON
+  LOST
+}
+
+model Lead {
+  id          String     @id @default(uuid())
+  name        String
+  email       String
+  phone       String?
+  company     String?
+  serviceOfInterest String?
+  message     String?
+  source      LeadSource
+  status      LeadStatus @default(NEW)
+  branchId    String?
+  branch      Branch?    @relation(fields: [branchId], references: [id])
+  assignedTo  User?      @relation(fields: [assignedToId], references: [id])
+  assignedToId String?
+  // The visitor's analytics session id (see PageView.sessionId below),
+  // sent in by the public site's lead forms when the browser has it in
+  // sessionStorage. Optional and unindexed-for-uniqueness on purpose — it's
+  // only ever used to look up this lead's own PageView trail (one query,
+  // by value), not to identify or de-duplicate leads. No IP or persistent
+  // visitor id is stored anywhere in this schema; this is the same
+  // per-tab, clears-on-tab-close id PageView already uses.
+  sessionId   String?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  chatConversations ChatConversation[]
+
+  @@index([status])
+  @@index([source])
+  @@index([sessionId])
+}
+
+// ---------------------------------------------------------------------------
+// SEO
+// ---------------------------------------------------------------------------
+
+model SeoMeta {
+  id              String   @id @default(uuid())
+  path            String // "/services/external-audit"
+  languageCode    String
+  metaTitle       String
+  metaDescription String
+  keywords        String?
+  canonicalUrl    String?
+  ogImageUrl      String?
+  schemaType      String? // "Organization" | "LocalBusiness" | "FAQ" | "Service" | "Article" | "Breadcrumb"
+  schemaJson      Json?
+  noindex         Boolean  @default(false) // hides this exact path+language from search engines (adds <meta name="robots" content="noindex,nofollow">)
+  updatedAt       DateTime @updatedAt
+
+  @@unique([path, languageCode])
+}
+
+// ---------------------------------------------------------------------------
+// Theme
+// ---------------------------------------------------------------------------
+
+model ThemeSetting {
+  id    String @id @default("default")
+  // A single JSON document is intentional: the Theme Builder edits one
+  // record as a whole (colors, typography, radii, button/card styles,
+  // light/dark variants) rather than one row per token.
+  tokens Json
+  updatedAt DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Integration settings — moved out of .env so they're editable from
+// Admin → Email Settings / Cloudinary Settings without redeploying.
+// Singleton rows, same shape as ThemeSetting. Secrets (smtpPass,
+// resendApiKey, cloudinaryApiSecret) are stored as plain text here, same
+// disclaimer as User.mfaSecret elsewhere in this schema — encrypt at rest
+// in production (e.g. Postgres column encryption or a KMS-backed secrets
+// store) if this database itself isn't already encrypted at rest.
+// EmailService/CloudinaryConfigService read these first and fall back to
+// the matching .env vars if a row doesn't exist yet, so an existing
+// .env-configured deployment keeps working unchanged after this upgrade.
+// ---------------------------------------------------------------------------
+
+model EmailSettings {
+  id           String   @id @default("default")
+  provider     String   @default("smtp") // "smtp" | "resend"
+  fromName     String?
+  fromEmail    String?
+  smtpHost     String?
+  smtpPort     Int?
+  smtpSecure   Boolean  @default(false)
+  smtpUser     String?
+  smtpPass     String?
+  resendApiKey String?
+  updatedAt    DateTime @updatedAt
+}
+
+model CloudinarySettings {
+  id         String   @id @default("default")
+  cloudName  String?
+  apiKey     String?
+  apiSecret  String?
+  updatedAt  DateTime @updatedAt
+}
+
+// Same singleton pattern as EmailSettings/CloudinarySettings above — the
+// Google Cloud Translation API key, editable from Admin → Translate
+// Settings instead of only GOOGLE_TRANSLATE_API_KEY in .env.
+// LanguagesService.translateBatch() reads this first and falls back to the
+// env var if no row exists yet.
+model TranslateSettings {
+  id        String   @id @default("default")
+  apiKey    String?
+  updatedAt DateTime @updatedAt
+}
+
+// One row per Google Translate API call (translateBatch() logs it right
+// after a successful request), so Admin → Translate Settings can show a
+// real usage/cost KPI panel instead of a guess. Kept lightweight —
+// aggregated with SUM/COUNT queries — rather than one row per translated
+// string, since the field-level detail isn't needed for a usage dashboard.
+model TranslationUsageLog {
+  id           String   @id @default(uuid())
+  // Total character count sent to Google across every string in that one
+  // translateBatch() call (source text length, which is what Google's
+  // "Basic" Translation API bills by — see the $/1M-character comment on
+  // GOOGLE_TRANSLATE_PRICE_PER_MILLION_CHARS in translate-settings.service.ts).
+  charCount    Int
+  languageCode String
+  // Which admin screen triggered this — "insights" | "services" | "team" |
+  // "testimonials" | "auto-on-save", so the KPI panel can break usage down
+  // by source, not just show one grand total.
+  source       String
+  createdAt    DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Chatbot
+// ---------------------------------------------------------------------------
+
+model FaqItem {
+  id           String @id @default(uuid())
+  category     String?
+  isActive     Boolean @default(true)
+  order        Int     @default(0)
+
+  translations FaqTranslation[]
+}
+
+model FaqTranslation {
+  id           String  @id @default(uuid())
+  faq          FaqItem @relation(fields: [faqId], references: [id], onDelete: Cascade)
+  faqId        String
+  languageCode String
+  question     String
+  answer       String
+
+  @@unique([faqId, languageCode])
+}
+
+model ChatConversation {
+  id         String   @id @default(uuid())
+  sessionId  String   @unique
+  leadId     String?
+  lead       Lead?    @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  startedAt  DateTime @default(now())
+  endedAt    DateTime?
+  escalated  Boolean  @default(false)
+
+  messages ChatMessage[]
+}
+
+enum ChatRole {
+  USER
+  BOT
+  AGENT
+}
+
+model ChatMessage {
+  id             String           @id @default(uuid())
+  conversation   ChatConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  conversationId String
+  role           ChatRole
+  content        String
+  createdAt      DateTime         @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// Media (S3 / Azure Blob references)
+// ---------------------------------------------------------------------------
+
+model MediaAsset {
+  id           String   @id @default(uuid())
+  url          String
+  storageKey   String // key/path in the S3 / Azure Blob bucket
+  mimeType     String
+  altText      String?
+  uploadedById String?
+  createdAt    DateTime @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// Analytics — built-in page-view tracking, no 3rd-party account needed.
+// Deliberately minimal: no IP address, no cookie/visitor ID, no full user
+// agent string kept long-term — just what's needed to answer "how much
+// traffic, which pages, where from, trending which way" for the admin's
+// Analytics dashboard, without taking on a privacy-policy/consent-banner
+// obligation the rest of this project doesn't otherwise have.
+// ---------------------------------------------------------------------------
+
+model PageView {
+  id         String   @id @default(uuid())
+  path       String // e.g. "/services/external-audit" (no language prefix — languageCode below carries that)
+  languageCode String @default("en")
+  referrer   String? // document.referrer, when present and not same-origin
+  createdAt  DateTime @default(now())
+
+  // --- Added for the expanded Admin → Analytics dashboard (traffic
+  // breakdown + flow), all still first-party/self-hosted — no IP address,
+  // cookie or third-party geo-IP lookup is stored anywhere.
+  sessionId  String? // random id the browser keeps in sessionStorage for one tab's visit — lets the dashboard group a visitor's page views into a session to compute entry/exit pages and page-to-page flow, without any persistent/cross-session identifier.
+  country    String? // ISO-ish country guess from the visitor's browser timezone (Intl.DateTimeFormat resolvedOptions().timeZone mapped client-side) — not IP geolocation, so nothing server-side ever sees an IP.
+  device     String? // "desktop" | "mobile" | "tablet", parsed server-side from the User-Agent request header.
+  browser    String? // "Chrome" | "Safari" | "Firefox" | "Edge" | "Samsung Internet" | "Opera" | "Other", parsed the same way.
+
+  @@index([path])
+  @@index([createdAt])
+  @@index([sessionId])
+}
