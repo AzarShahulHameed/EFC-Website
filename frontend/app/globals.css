@@ -159,18 +159,13 @@ body {
 }
 
 /* ---------------------------------------------------------------------
-   Location gate: hidden by default; a pre-hydration inline script (see
-   components/site/LocationGate.tsx) adds/removes `lg-open` on <html>
-   before first paint, so there's no flash of the homepage underneath it.
+   Location gate: components/site/LocationGate.tsx renders nothing at all
+   until the visitor scrolls to the bottom of the page (no CSS-level
+   show/hide needed — the component simply isn't in the DOM until then),
+   at which point it mounts as a flex overlay directly via its own classes.
    --------------------------------------------------------------------- */
 .location-gate {
-  display: none;
-}
-html.lg-open .location-gate {
   display: flex;
-}
-html.lg-open body {
-  overflow: hidden;
 }
 
 /* ---------------------------------------------------------------------

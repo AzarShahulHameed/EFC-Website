@@ -178,6 +178,34 @@ export const locationGateContent = {
   trigger: "once" as "once" | "session" | "always",
 };
 
+// Pre-launch countdown wrapper. When enabled, every visitor sees ONLY this
+// screen (no header, footer or page content at all) until `launchAt`
+// passes — checked server-side on every request, so it can't be bypassed
+// by changing a device's clock, and there's nothing for an admin to
+// manually switch off at the exact moment: once real time passes
+// `launchAt`, the gate stops rendering on its own. `enabled` is the
+// separate master switch — turn the whole thing off (or reuse it for a
+// future campaign by setting a new `launchAt`) without losing the rest of
+// the configured look. Preview it any time from Admin → Launch Countdown →
+// Preview, which always shows the current settings regardless of `enabled`.
+export const launchGateContent = {
+  enabled: false,
+  // ISO datetime string (e.g. "2026-10-02T18:00:00.000Z"), or "" to show
+  // the gate indefinitely (no ticking countdown, just enabled/disabled).
+  launchAt: "",
+  // Shown inside the circular lettermark when no logo image is uploaded.
+  crestLetter: "E",
+  logoUrl: "",
+  headline: "Something new is almost ready.",
+  subtext: "Our new website launches soon.",
+  backgroundColor: "#0b1a33",
+  accentColor: "#c9a24b",
+  // Petal colors for the "blossom blast" that plays the moment the
+  // countdown reaches zero, before the real site loads in.
+  petalColors: ["#c9a24b", "#e2c67a", "#f6f1e6"] as string[],
+  enableBlossom: true,
+};
+
 // `logoUrl` is optional per badge — an admin can upload a real logo image
 // (Admin → Pages & Content → Home → Trust Strip) instead of, or alongside,
 // the plain text label.

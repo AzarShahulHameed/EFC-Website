@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { adminFetch } from "@/lib/session";
-import { closeJobAction, createJobAction, updateCareersIntroAction } from "@/lib/admin-actions";
+import { closeJobAction, createJobAction, deleteJobAction, updateCareersIntroAction } from "@/lib/admin-actions";
 import FieldLabel from "@/components/admin/FieldLabel";
 import RichTextField from "@/components/admin/RichTextField";
 import { careersIntro as defaultCareersIntro } from "@/lib/content";
@@ -91,12 +91,15 @@ export default async function AdminCareersPage({
                       {j.isOpen ? "Open" : "Closed"}
                     </span>
                   </td>
-                  <td className="px-6 py-3.5 text-right">
+                  <td className="px-6 py-3.5 text-right whitespace-nowrap">
                     {j.isOpen ? (
-                      <form action={closeJobAction.bind(null, j.id)}>
-                        <button type="submit" className="text-[12.5px] font-semibold text-red-700">Close</button>
+                      <form action={closeJobAction.bind(null, j.id)} className="inline">
+                        <button type="submit" className="text-[12.5px] font-semibold text-ink mr-4">Close</button>
                       </form>
                     ) : null}
+                    <form action={deleteJobAction.bind(null, j.id)} className="inline">
+                      <button type="submit" className="text-[12.5px] font-semibold text-red-700">Delete</button>
+                    </form>
                   </td>
                 </tr>
               ))}

@@ -25,6 +25,7 @@ import {
   footerLinks as defaultFooterLinks,
   uiStrings as defaultUiStrings,
   locationGateContent as defaultLocationGate,
+  launchGateContent as defaultLaunchGate,
   pageHeaders as defaultPageHeaders,
   type Service,
   type SubService,
@@ -256,6 +257,43 @@ export type LocationGateConfig = typeof defaultLocationGate;
 export async function getLocationGateConfig(lang = "en"): Promise<LocationGateConfig> {
   const content = await getPageContent("global", lang);
   return { ...defaultLocationGate, ...(content.locationGate ?? {}) };
+}
+
+// --- Launch countdown gate (pre-launch, site-wide) ---
+// Deliberately always read as "en" regardless of the visitor's locale —
+// admin-configured technical settings (enabled, launchAt, colors) aren't
+// translatable content, and the headline/subtext text isn't wired into
+// the bulk-translate pipeline yet (see the admin action's own comment).
+
+export type LaunchGateConfig = typeof defaultLaunchGate;
+
+// Deliberately bypasses getPageContent()'s shared fetchJson() (and its
+// `revalidate: 60` Data Cache) with a dedicated, always-fresh, uncached
+// fetch. This check gates whether EVERY visitor sees the real site at all,
+// so it must reflect the true current config on every single request —
+// a stale-for-up-to-60-seconds read here could keep the countdown frozen
+// past its real launch moment (or briefly reveal the site early right
+// after an admin re-enables it), which a 60s cache is fine for ordinary
+// page copy but never fine for this.
+export async function getLaunchGateConfig(): Promise<LaunchGateConfig> {
+  try {
+    const res = await fetch(`${API_URL}/content/global/en`, { cache: "no-store", signal: withTimeout() });
+    const content = res.ok ? await res.json() : {};
+    return { ...defaultLaunchGate, ...((content as any)?.launchGate ?? {}) };
+  } catch {
+    return defaultLaunchGate;
+  }
+}
+
+// True only while the gate should actually block the site: the master
+// switch is on AND (no launch time is set, OR that time hasn't passed
+// yet). Once real server time passes `launchAt`, this flips to false on
+// its own — nothing to remember to switch off at the exact moment.
+export function isLaunchGateActive(config: LaunchGateConfig): boolean {
+  if (!config.enabled) return false;
+  if (!config.launchAt) return true;
+  const target = new Date(config.launchAt).getTime();
+  return Number.isFinite(target) ? Date.now() < target : true;
 }
 
 export type LocationGateEntry = { country: string; externalUrl?: string };

@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import type { LocationGateTrigger } from "@/lib/location-gate-boot-script";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { heroScrim } from "@/lib/hero-scrim";
+
+export type LocationGateTrigger = "once" | "session" | "always";
 
 const STORAGE_KEY = "efc_region";
 
@@ -62,15 +63,18 @@ const BUTTON_RADIUS: Record<ButtonStyle, string> = {
   pill: "999px",
 };
 
-// The gate's *visibility* is decided before hydration by the inline script
-// from `locationGateBootScript` (lib/location-gate-boot-script.ts — kept
-// out of this "use client" file on purpose, see that file's comment) via
-// the `lg-open` class on <html>, so there is no flash of the homepage
-// underneath it. This component handles the interaction: picking a
-// country, remembering it (per the admin's trigger setting), animating
-// itself in/out, and closing — or, for a country whose branch has an
-// External Website URL set (Admin → Branches → Edit), sending the visitor
-// straight there instead.
+// Deliberately does NOT appear at page load. It stays completely out of the
+// DOM (this component renders nothing) until the visitor scrolls to the
+// very bottom of the page — only then does it mount and fade in, so someone
+// just arriving to read the homepage is never interrupted; the gate greets
+// them once they've reached the end of the content instead. It still only
+// does this at all if the admin's trigger setting (Admin → Site Settings →
+// Location Gate → "When should this appear") says this visitor hasn't
+// already made a choice — "once"/"session" check storage, "always" never
+// does. This component also handles the interaction: picking a country,
+// remembering it, animating itself in/out, and closing — or, for a country
+// whose branch has an External Website URL set (Admin → Branches → Edit),
+// sending the visitor straight there instead.
 export default function LocationGate({
   headline,
   subtext,
@@ -90,14 +94,68 @@ export default function LocationGate({
   const [selected, setSelected] = useState<string | null>(countries[0]?.country ?? null);
   const [closing, setClosing] = useState(false);
   const [visible, setVisible] = useState(false);
+  // Whether this visitor is even due to see the gate this visit, per the
+  // admin's trigger setting — checked once, client-side, since storage
+  // isn't available during server rendering.
+  const [eligible, setEligible] = useState(false);
+  // Whether the gate has actually mounted yet. Stays false (nothing
+  // rendered at all) until the scroll-position check below flips it once.
+  const [open, setOpen] = useState(false);
+  const openedRef = useRef(false);
 
-  // Two-frame delay before flipping to the "visible" transform/opacity so
-  // the browser actually paints the hidden state first — without this the
-  // very first render already matches the end state and no transition plays.
   useEffect(() => {
+    try {
+      if (trigger === "always") {
+        setEligible(true);
+        return;
+      }
+      setEligible(!storageFor(trigger)?.getItem(STORAGE_KEY));
+    } catch {
+      // Storage unavailable (private browsing, etc.) — fail open rather
+      // than silently never showing the gate at all.
+      setEligible(true);
+    }
+  }, [trigger]);
+
+  // Opens the gate the moment the visitor scrolls within a hair of the
+  // bottom of the page — not a moment sooner. Checked once immediately too,
+  // so a page short enough to already BE at the bottom (little content, or
+  // a tall viewport) still opens it instead of waiting for a scroll that
+  // will never come.
+  useEffect(() => {
+    if (!eligible || openedRef.current) return;
+    function checkScrollPosition() {
+      const scrolledTo = window.innerHeight + window.scrollY;
+      const fullHeight = document.documentElement.scrollHeight;
+      if (scrolledTo >= fullHeight - 24) {
+        openedRef.current = true;
+        setOpen(true);
+      }
+    }
+    checkScrollPosition();
+    window.addEventListener("scroll", checkScrollPosition, { passive: true });
+    window.addEventListener("resize", checkScrollPosition);
+    return () => {
+      window.removeEventListener("scroll", checkScrollPosition);
+      window.removeEventListener("resize", checkScrollPosition);
+    };
+  }, [eligible]);
+
+  // Once open: lock page scroll behind the gate (there's nothing further to
+  // scroll to anyway) and, a couple of frames later, flip to the "visible"
+  // transform/opacity so the browser actually paints the hidden state
+  // first — without that delay the very first render already matches the
+  // end state and no entrance transition plays.
+  useEffect(() => {
+    if (!open) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
     const raf = requestAnimationFrame(() => requestAnimationFrame(() => setVisible(true)));
-    return () => cancelAnimationFrame(raf);
-  }, []);
+    return () => {
+      cancelAnimationFrame(raf);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [open]);
 
   function choose() {
     if (!selected) return;
@@ -115,14 +173,16 @@ export default function LocationGate({
       // Storage unavailable (private browsing, etc.) — fall back to just
       // closing the gate for this visit rather than blocking the site.
     }
-    document.documentElement.classList.remove("lg-open");
     setVisible(false);
     setClosing(true);
+    // Unmount only after the fade-out transition (longest delay+duration
+    // below is 0.68s) has actually finished playing.
+    setTimeout(() => setOpen(false), 700);
   }
 
   const headlineWords = useMemo(() => headline.split(/\s+/).filter(Boolean), [headline]);
 
-  if (countries.length === 0) return null;
+  if (countries.length === 0 || !open) return null;
 
   const { hidden, visible: visibleTransform } = ANIMATION_STYLES[animation];
   const filterPair = ANIMATION_FILTER[animation];

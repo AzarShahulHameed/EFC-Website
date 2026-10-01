@@ -68,6 +68,18 @@ async function maybeRefreshSession(request: NextRequest, response: NextResponse)
   return response;
 }
 
+// Forwarded as a request header (not just set on the response) so Server
+// Components further down the tree — specifically the marketing layout,
+// which needs to know whether it's wrapping the homepage specifically, to
+// decide whether to hide the header/footer around the Landing Animation —
+// can read it with next/headers' headers(). There's no official "give me
+// the current pathname" API for a layout, so this is the standard pattern.
+function withPathname(request: NextRequest): NextResponse {
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set("x-pathname", request.nextUrl.pathname);
+  return NextResponse.next({ request: { headers: requestHeaders } });
+}
+
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
@@ -85,7 +97,7 @@ export async function middleware(request: NextRequest) {
   if (isExempt) return NextResponse.next();
 
   const hasLocale = locales.some((l) => pathname === `/${l}` || pathname.startsWith(`/${l}/`));
-  if (hasLocale) return NextResponse.next();
+  if (hasLocale) return withPathname(request);
 
   // TODO: read the Accept-Language header here to pick a smarter default
   // than `defaultLocale` for first-time visitors.

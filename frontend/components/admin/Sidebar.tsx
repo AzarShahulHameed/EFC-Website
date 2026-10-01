@@ -33,6 +33,7 @@ const navGroups = [
   {
     label: "Site Structure",
     items: [
+      { label: "Launch Countdown", href: "/admin/launch", icon: "clock" },
       { label: "Site Settings", href: "/admin/site-settings", icon: "settings" },
       { label: "Header & Footer", href: "/admin/header-footer", icon: "headerFooter" },
       { label: "UI Text", href: "/admin/ui-text", icon: "messages" },

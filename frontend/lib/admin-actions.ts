@@ -14,6 +14,7 @@ import {
   heroContent as defaultHeroContent,
   freezoneContent as defaultFreezoneContent,
   locationGateContent as defaultLocationGateContent,
+  launchGateContent as defaultLaunchGateContent,
   trustBadges as defaultTrustBadgesContent,
   stats as defaultStatsContent,
   whyChooseUs as defaultWhyChooseUsContent,
@@ -1093,6 +1094,11 @@ export async function closeJobAction(id: string) {
   redirect("/admin/careers?saved=1");
 }
 
+export async function deleteJobAction(id: string) {
+  await apiWrite(`/careers/admin/jobs/${id}`, { method: "DELETE" }, "/admin/careers");
+  redirect("/admin/careers?saved=1");
+}
+
 export async function updateApplicationStatusAction(id: string, formData: FormData) {
   const status = formData.get("status")?.toString() ?? "RECEIVED";
   await apiWrite(`/careers/admin/applications/${id}/status`, { method: "PATCH", body: JSON.stringify({ status }) }, "/admin/careers/applications");
@@ -1322,6 +1328,60 @@ export async function updateLocationGateAction(formData: FormData) {
   };
   await saveContentBlock("global", "locationGate", data, "/admin/site-settings");
   redirect("/admin/site-settings?saved=1");
+}
+
+// Pre-launch countdown gate (site-wide) — see lib/content.ts's
+// launchGateContent for the "enabled + launchAt" logic. Headline/subtext
+// aren't wired into the bulk-translate pipeline yet (a future round can
+// add this the same way uiStrings did) — for a same-day launch, shipping
+// the gate itself mattered more than translating its one screen, which
+// most visitors will only ever see for a few hours anyway.
+export async function updateLaunchGateAction(formData: FormData) {
+  let logoUrl: string | null = null;
+  try {
+    logoUrl = await uploadToCloudinary(formData.get("logo") as File | null, "sterling-vance/launch-gate");
+  } catch (err) {
+    redirect(`/admin/launch?error=${encodeURIComponent((err as Error).message)}`);
+  }
+  const existingLogoUrl = formData.get("existingLogoUrl")?.toString() || undefined;
+  const removeLogo = formData.get("removeLogo")?.toString() === "1";
+
+  // <input type="datetime-local"> gives a value like "2026-10-02T18:00" in
+  // the ADMIN's OWN browser's local time zone, with no offset attached —
+  // parsing it naively on THIS SERVER would silently shift the launch
+  // moment if the two are ever in different zones. The admin page's inline
+  // script writes the browser's own `getTimezoneOffset()` (in minutes,
+  // JS's usual sign convention: positive when local is BEHIND UTC) into a
+  // hidden field. Treating the local digits as if they were already UTC,
+  // then adding that same offset, recovers the real UTC instant — e.g. for
+  // an admin in Dubai (UTC+4, offset -240), "18:00 local" + (-240min)
+  // correctly becomes "14:00 UTC".
+  const localValue = formData.get("launchAt")?.toString() || "";
+  const offsetMinutes = Number(formData.get("launchAtOffsetMinutes")) || 0;
+  let launchAt = "";
+  if (localValue) {
+    const asIfUtc = new Date(`${localValue}:00.000Z`).getTime();
+    launchAt = Number.isFinite(asIfUtc) ? new Date(asIfUtc + offsetMinutes * 60_000).toISOString() : "";
+  }
+
+  const petalColors = ["petalColor0", "petalColor1", "petalColor2"]
+    .map((name) => formData.get(name)?.toString())
+    .filter((v): v is string => !!v);
+
+  const data = {
+    enabled: formData.get("enabled")?.toString() === "1",
+    launchAt,
+    crestLetter: formData.get("crestLetter")?.toString().slice(0, 3) || "E",
+    logoUrl: removeLogo ? "" : logoUrl ?? existingLogoUrl ?? "",
+    headline: formData.get("headline")?.toString() ?? "",
+    subtext: formData.get("subtext")?.toString() ?? "",
+    backgroundColor: formData.get("backgroundColor")?.toString() || "#0b1a33",
+    accentColor: formData.get("accentColor")?.toString() || "#c9a24b",
+    petalColors: petalColors.length > 0 ? petalColors : ["#c9a24b", "#e2c67a", "#f6f1e6"],
+    enableBlossom: formData.get("enableBlossom")?.toString() === "1",
+  };
+  await saveContentBlock("global", "launchGate", data, "/admin/launch");
+  redirect("/admin/launch?saved=1");
 }
 
 // Per-section scroll-reveal animation for a whole page (Admin → Content →
@@ -2426,6 +2486,7 @@ function getSectionFallback(page: string, section: string): any {
   if (section === "pageHeader") return pageHeaderDefaults[page];
   if (page === "global" && section === "siteConfig") return defaultSiteConfigContent;
   if (page === "global" && section === "locationGate") return defaultLocationGateContent;
+  if (page === "global" && section === "launchGate") return defaultLaunchGateContent;
   if (page === "global" && section === "navLinks") return defaultNavLinksContent;
   if (page === "global" && section === "footerLinks") return defaultFooterLinksContent;
   if (page === "global" && section === "uiStrings") return defaultUiStringsContent;
